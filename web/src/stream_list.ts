@@ -669,6 +669,7 @@ export function zoom_in_topics(options: {stream_id: number | undefined}): void {
             // Add search box for topics list.
             $elt.children("div.bottom_left_row").append($(render_filter_topics()));
             topic_list.setup_topic_search_typeahead();
+            topic_list.setup_left_sidebar_topic_search_typeahead();
         } else {
             $elt.toggleClass("hide", true);
         }

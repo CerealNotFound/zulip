@@ -11,6 +11,7 @@ import * as topic_list_data from "./topic_list_data.ts";
 import {user_settings} from "./user_settings.ts";
 import * as user_topics from "./user_topics.ts";
 import * as util from "./util.ts";
+import {filter_topics_left_sidebar_top} from "./topic_list.ts";
 
 let first_render_completed = false;
 let current_sections: StreamListSection[] = [];
@@ -169,9 +170,8 @@ export function sort_groups(
         // If any of the unmuted topics of the channel match the search
         // term, or a muted topic matches the current topic, we include
         // the channel in the list of matches.
-        const topics = topic_list_data.get_filtered_topic_names(current_channel_id, (topic_names) =>
-            topic_list_data.filter_topics_by_search_term(topic_names, search_term),
-        );
+        const topics = topic_list_data.get_filtered_topic_names(current_channel_id, (topic_names) => filter_topics_left_sidebar_top(topic_names));
+        console.log("topics", topics)
         if (
             topics.some(
                 (topic) =>

@@ -381,6 +381,15 @@ function filter_topics_left_sidebar(topic_names: string[]): string[] {
     );
 }
 
+export function filter_topics_left_sidebar_top(topic_names: string[]): string[] {
+    const search_term = ui_util.get_left_sidebar_search_term();
+    return topic_list_data.filter_topics_by_search_term(
+        topic_names,
+        search_term,
+        get_typeahead_search_pills_syntax(),
+    );
+}
+
 export class LeftSidebarTopicListWidget extends TopicListWidget {
     constructor($parent_elem: JQuery, my_stream_id: number) {
         super($parent_elem, my_stream_id, filter_topics_left_sidebar);
@@ -519,6 +528,11 @@ export function get_left_sidebar_topic_search_term(): string {
     return ui_util.get_left_sidebar_search_term();
 }
 
+function left_sidebar_is_filtering_topics(): boolean {
+    return zoomed && active_stream_id() !== undefined;
+}
+
+
 export function get_typeahead_search_pills_syntax(): string {
     const pills = topic_filter_pill_widget?.items() ?? [];
 
@@ -545,6 +559,117 @@ function set_search_bar_text(text: string): void {
     $input.trigger("input");
 }
 
+function get_topic_filter_typeahead_options({
+    $input,
+    get_search_text,
+    clear_search_text,
+    $pill_container,
+}: {
+    $input: JQuery;
+    get_search_text: () => string;
+    clear_search_text: () => void;
+    $pill_container: JQuery;
+}) {
+    return {
+        source() {
+            const stream_id = active_stream_id();
+            console.log("typeahead stream_id", stream_id);
+            assert(stream_id !== undefined);
+
+            console.log(
+                "has resolved topics",
+                stream_topic_history.stream_has_locally_available_resolved_topics(stream_id),
+            );
+            if (!stream_topic_history.stream_has_locally_available_resolved_topics(stream_id)) {
+                return [];
+            }
+
+            if ($pill_container.find(".pill").length > 0) {
+                return [];
+            }
+
+            return [...topic_filter_pill.filter_options];
+        },
+
+        item_html(item: TopicFilterPill) {
+            return typeahead_helper.render_topic_state(item.label);
+        },
+
+        matcher(item: TopicFilterPill, query: string) {
+            return (
+                query.includes(":") &&
+                (item.syntax.toLowerCase().startsWith(query.toLowerCase()) ||
+                    (item.syntax.startsWith("-") &&
+                        item.syntax.slice(1).toLowerCase().startsWith(query.toLowerCase())))
+            );
+        },
+
+        sorter(items: TopicFilterPill[]) {
+            return items;
+        },
+
+        updater(item: TopicFilterPill) {
+            assert(topic_filter_pill_widget !== null);
+            topic_filter_pill_widget.clear(true);
+            topic_filter_pill_widget.appendValue(item.syntax);
+            clear_search_text();
+            $input.trigger("focus");
+            return get_search_text();
+        },
+
+        stopAdvance: true,
+        dropup: true,
+    };
+}
+ 
+
+export function setup_left_sidebar_topic_search_typeahead(): void {
+    if (!left_sidebar_is_filtering_topics()) {
+        return;
+    }
+
+    const $input = $<HTMLInputElement>(".left-sidebar-search-input").expectOne();
+    const $pill_container = $("#left-sidebar-topic-filter-pills");
+
+    if ($input.length === 0 || $pill_container.length === 0) {
+        return;
+    }
+
+    topic_filter_pill_widget = topic_filter_pill.create_pills($pill_container);
+
+    const typeahead_input: TypeaheadInputElement = {
+        $element: $input,
+        type: "input",
+    };
+
+    const options = get_topic_filter_typeahead_options({
+        $input,
+        $pill_container,
+        get_search_text: ui_util.get_left_sidebar_search_term,
+        clear_search_text: () => {
+            $input.val("");
+        },
+    });
+
+    topic_state_typeahead = new Typeahead(typeahead_input, options);
+
+    $input.on("keydown", (e) => {
+        if (e.key === "Enter") {
+            e.preventDefault();
+            e.stopPropagation();
+        }
+    });
+
+    topic_filter_pill_widget.onPillRemove(() => {
+        const stream_id = active_stream_id();
+        if (stream_id !== undefined) {
+            const widget = active_widgets.get(stream_id);
+            widget?.build();
+        }
+    });
+}
+
+
 export function setup_topic_search_typeahead(): void {
     const $input = $("#topic_filter_query");
     const $pill_container = $("#left-sidebar-filter-topic-input");
@@ -560,52 +685,12 @@ export function setup_topic_search_typeahead(): void {
         type: "contenteditable",
     };
 
-    const options = {
-        source() {
-            const stream_id = active_stream_id();
-            assert(stream_id !== undefined);
-
-            if (!stream_topic_history.stream_has_locally_available_resolved_topics(stream_id)) {
-                return [];
-            }
-            const $pills = $("#left-sidebar-filter-topic-input .pill");
-            if ($pills.length > 0) {
-                return [];
-            }
-            return [...topic_filter_pill.filter_options];
-        },
-        item_html(item: TopicFilterPill) {
-            return typeahead_helper.render_topic_state(item.label);
-        },
-        matcher(item: TopicFilterPill, query: string) {
-            // This basically only matches if `is:` is in the query.
-            return (
-                query.includes(":") &&
-                (item.syntax.toLowerCase().startsWith(query.toLowerCase()) ||
-                    (item.syntax.startsWith("-") &&
-                        item.syntax.slice(1).toLowerCase().startsWith(query.toLowerCase())))
-            );
-        },
-        sorter(items: TopicFilterPill[]) {
-            // This sort order places "Unresolved topics" first
-            // always, which is good because that's almost always what
-            // users will want.
-            return items;
-        },
-        updater(item: TopicFilterPill) {
-            assert(topic_filter_pill_widget !== null);
-            topic_filter_pill_widget.clear(true);
-            topic_filter_pill_widget.appendValue(item.syntax);
-            set_search_bar_text("");
-            $input.trigger("focus");
-            return get_left_sidebar_topic_search_term();
-        },
-        // Prevents key events from propagating to other handlers or
-        // triggering default browser actions.
-        stopAdvance: true,
-        // Use dropup, to match compose typeahead.
-        dropup: true,
-    };
+    const options = get_topic_filter_typeahead_options({
+        $input,
+        $pill_container,
+        get_search_text: get_left_sidebar_topic_search_term,
+        clear_search_text: () => set_search_bar_text(""),
+    });
 
     topic_state_typeahead = new Typeahead(typeahead_input, options);
 
