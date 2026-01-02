@@ -44,7 +44,7 @@ from zerver.lib.url_encoding import (
     stream_narrow_url,
     topic_narrow_url,
 )
-from zerver.models import Message, Realm, Recipient, Stream, UserMessage, UserProfile
+from zerver.models import Message, Realm, Recipient, Stream, Subscription, UserMessage, UserProfile
 from zerver.models.messages import get_context_for_message
 from zerver.models.scheduled_jobs import NotificationTriggers
 from zerver.models.users import get_user_profile_by_id
@@ -230,10 +230,20 @@ def get_channel_privacy_icon(channel: Stream) -> str:
     return "#"
 
 
+def hex_to_rgba(hex_color: str, opacity: float) -> str:
+    # Remove the "#" if present
+    hex_color = hex_color.lstrip("#")
+    r = int(hex_color[0:2], 16)
+    g = int(hex_color[2:4], 16)
+    b = int(hex_color[4:6], 16)
+    return f"rgba({r}, {g}, {b}, {opacity})"
+
+
 def build_message_list(
     user: UserProfile,
     messages: list[Message],
     stream_id_map: dict[int, Stream] | None = None,  # only needs id, name
+    subscription_colors: dict[int, str] | None = None,
 ) -> dict[str, Any]:
     """
     Builds the message list object for the message notification email and
@@ -303,12 +313,24 @@ def build_message_list(
         sender = sender_string(message)
         return {"sender": sender, "content": [build_message_payload(message, sender)]}
 
-    def digest_block_header(message: Message) -> dict[str, Any]:
+    def digest_block_header(
+        message: Message,
+        subscription_colors: dict[int, str] | None,
+    ) -> dict[str, Any]:
         assert message.recipient.type == Recipient.STREAM
         stream_id = message.recipient.type_id
         assert stream_id_map is not None
         assert stream_id in stream_id_map
         stream = stream_id_map[stream_id]
+        color = Subscription.DEFAULT_STREAM_COLOR
+        if subscription_colors is not None:
+            color = subscription_colors.get(
+                message.recipient_id,
+                Subscription.DEFAULT_STREAM_COLOR,
+            )
+        else:
+            color = Subscription.DEFAULT_STREAM_COLOR
+        recipient_bar_color = hex_to_rgba(color, 0.3)
         narrow_link = topic_narrow_url(
             realm=user.realm,
             stream=stream,
@@ -329,6 +351,7 @@ def build_message_list(
         return {
             "plain": header,
             "html": header_html,
+            "recipient_bar_color": recipient_bar_color,
         }
 
     # Collapse message list to:
@@ -354,7 +377,10 @@ def build_message_list(
     messages_to_render: dict[str, Any] = {"senders": sender_block}
     if stream_id_map:
         # Needed only for digest emails
-        header = digest_block_header(messages[0])
+        header = digest_block_header(
+            messages[0],
+            subscription_colors=subscription_colors,
+        )
         messages_to_render["header"] = header
 
     for message in messages[1:]:
